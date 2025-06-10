@@ -1,0 +1,689 @@
+"""
+Services for data ingestion and processing.
+"""
+
+import pandas as pd
+import numpy as np
+import json
+import logging
+from typing import Dict, Any, List, Optional
+from django.conf import settings
+from celery import shared_task
+import sqlalchemy
+import requests
+from io import StringIO
+
+from .models import DataSource, DataColumn, DataQualityReport, DataTransformation
+
+logger = logging.getLogger(__name__)
+
+
+class DataIngestionService:
+    """
+    Service for data ingestion operations.
+    """
+    
+    def __init__(self):
+        self.supported_file_types = ['csv', 'xlsx', 'xls', 'json', 'parquet']
+        self.supported_db_types = ['postgresql', 'mysql', 'sqlite', 'oracle', 'mssql']
+    
+    def read_file_data(self, file_path: str, file_type: str) -> pd.DataFrame:
+        """
+        Read data from uploaded file.
+        """
+        try:
+            if file_type == 'csv':
+                # Try different encodings and separators
+                for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                    try:
+                        df = pd.read_csv(file_path, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    raise ValueError("Could not decode CSV file with any supported encoding")
+            
+            elif file_type in ['xlsx', 'xls']:
+                df = pd.read_excel(file_path)
+            
+            elif file_type == 'json':
+                df = pd.read_json(file_path)
+            
+            elif file_type == 'parquet':
+                df = pd.read_parquet(file_path)
+            
+            else:
+                raise ValueError(f"Unsupported file type: {file_type}")
+            
+            return df
+        
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {str(e)}")
+            raise
+    
+    def read_database_data(self, connection_params: Dict[str, Any], query: str = None) -> pd.DataFrame:
+        """
+        Read data from database connection.
+        """
+        try:
+            # Build connection string
+            db_type = connection_params['db_type']
+            
+            if db_type == 'postgresql':
+                connection_string = (
+                    f"postgresql://{connection_params['db_username']}:"
+                    f"{connection_params['db_password']}@"
+                    f"{connection_params['db_host']}:"
+                    f"{connection_params['db_port']}/"
+                    f"{connection_params['db_name']}"
+                )
+            elif db_type == 'mysql':
+                connection_string = (
+                    f"mysql+pymysql://{connection_params['db_username']}:"
+                    f"{connection_params['db_password']}@"
+                    f"{connection_params['db_host']}:"
+                    f"{connection_params['db_port']}/"
+                    f"{connection_params['db_name']}"
+                )
+            elif db_type == 'sqlite':
+                connection_string = f"sqlite:///{connection_params['db_name']}"
+            else:
+                raise ValueError(f"Unsupported database type: {db_type}")
+            
+            # Create engine and read data
+            engine = sqlalchemy.create_engine(connection_string)
+            
+            if query:
+                df = pd.read_sql_query(query, engine)
+            else:
+                table_name = connection_params.get('db_table')
+                if not table_name:
+                    raise ValueError("Either query or table name must be provided")
+                df = pd.read_sql_table(table_name, engine)
+            
+            engine.dispose()
+            return df
+        
+        except Exception as e:
+            logger.error(f"Error reading database data: {str(e)}")
+            raise
+    
+    def read_api_data(self, api_params: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Read data from API endpoint.
+        """
+        try:
+            # Prepare request
+            url = api_params['api_url']
+            method = api_params.get('api_method', 'GET')
+            headers = api_params.get('api_headers', {})
+            params = api_params.get('api_params', {})
+            
+            # Add authentication
+            auth_type = api_params.get('api_auth_type', 'none')
+            if auth_type == 'bearer':
+                headers['Authorization'] = f"Bearer {api_params['api_auth_token']}"
+            elif auth_type == 'api_key':
+                headers['X-API-Key'] = api_params['api_auth_token']
+            
+            # Make request
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers,
+                params=params,
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            # Parse response
+            content_type = response.headers.get('content-type', '')
+            
+            if 'application/json' in content_type:
+                data = response.json()
+                if isinstance(data, list):
+                    df = pd.DataFrame(data)
+                elif isinstance(data, dict):
+                    # Try to find the data array in the response
+                    for key in ['data', 'results', 'items', 'records']:
+                        if key in data and isinstance(data[key], list):
+                            df = pd.DataFrame(data[key])
+                            break
+                    else:
+                        # If no array found, treat the dict as a single record
+                        df = pd.DataFrame([data])
+                else:
+                    raise ValueError("Unsupported JSON structure")
+            
+            elif 'text/csv' in content_type:
+                df = pd.read_csv(StringIO(response.text))
+            
+            else:
+                raise ValueError(f"Unsupported content type: {content_type}")
+            
+            return df
+        
+        except Exception as e:
+            logger.error(f"Error reading API data: {str(e)}")
+            raise
+    
+    def test_database_connection(self, connection_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Test database connection.
+        """
+        try:
+            # Build connection string
+            db_type = connection_params['db_type']
+            
+            if db_type == 'postgresql':
+                connection_string = (
+                    f"postgresql://{connection_params['db_username']}:"
+                    f"{connection_params['db_password']}@"
+                    f"{connection_params['db_host']}:"
+                    f"{connection_params['db_port']}/"
+                    f"{connection_params['db_name']}"
+                )
+            elif db_type == 'mysql':
+                connection_string = (
+                    f"mysql+pymysql://{connection_params['db_username']}:"
+                    f"{connection_params['db_password']}@"
+                    f"{connection_params['db_host']}:"
+                    f"{connection_params['db_port']}/"
+                    f"{connection_params['db_name']}"
+                )
+            elif db_type == 'sqlite':
+                connection_string = f"sqlite:///{connection_params['db_name']}"
+            else:
+                raise ValueError(f"Unsupported database type: {db_type}")
+            
+            # Test connection
+            engine = sqlalchemy.create_engine(connection_string)
+            with engine.connect() as conn:
+                # Get database info
+                if db_type == 'postgresql':
+                    result = conn.execute(sqlalchemy.text("SELECT version()"))
+                    version = result.fetchone()[0]
+                elif db_type == 'mysql':
+                    result = conn.execute(sqlalchemy.text("SELECT VERSION()"))
+                    version = result.fetchone()[0]
+                else:
+                    version = "Connected successfully"
+                
+                # Get table list
+                inspector = sqlalchemy.inspect(engine)
+                tables = inspector.get_table_names()
+            
+            engine.dispose()
+            
+            return {
+                'version': version,
+                'tables': tables[:20],  # Limit to first 20 tables
+                'table_count': len(tables)
+            }
+        
+        except Exception as e:
+            logger.error(f"Database connection test failed: {str(e)}")
+            raise
+    
+    def test_api_connection(self, api_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Test API connection.
+        """
+        try:
+            # Prepare request
+            url = api_params['api_url']
+            method = api_params.get('api_method', 'GET')
+            headers = api_params.get('api_headers', {})
+            params = api_params.get('api_params', {})
+            
+            # Add authentication
+            auth_type = api_params.get('api_auth_type', 'none')
+            if auth_type == 'bearer':
+                headers['Authorization'] = f"Bearer {api_params['api_auth_token']}"
+            elif auth_type == 'api_key':
+                headers['X-API-Key'] = api_params['api_auth_token']
+            
+            # Make request
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers,
+                params=params,
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            return {
+                'status_code': response.status_code,
+                'content_type': response.headers.get('content-type', ''),
+                'content_length': len(response.content),
+                'response_time': response.elapsed.total_seconds()
+            }
+        
+        except Exception as e:
+            logger.error(f"API connection test failed: {str(e)}")
+            raise
+    
+    def get_data_preview(self, data_source: DataSource, limit: int = 100, 
+                        offset: int = 0, columns: List[str] = None, 
+                        filters: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Get preview of data source.
+        """
+        try:
+            # Read data based on source type
+            if data_source.source_type == 'file':
+                df = self.read_file_data(
+                    data_source.file.path,
+                    data_source.file_type
+                )
+            elif data_source.source_type == 'database':
+                connection_params = {
+                    'db_type': data_source.db_type,
+                    'db_host': data_source.db_host,
+                    'db_port': data_source.db_port,
+                    'db_name': data_source.db_name,
+                    'db_username': data_source.db_username,
+                    'db_password': data_source.db_password,
+                    'db_table': data_source.db_table,
+                }
+                df = self.read_database_data(connection_params, data_source.db_query)
+            elif data_source.source_type == 'api':
+                api_params = {
+                    'api_url': data_source.api_url,
+                    'api_method': data_source.api_method,
+                    'api_headers': data_source.api_headers,
+                    'api_params': data_source.api_params,
+                    'api_auth_type': data_source.api_auth_type,
+                    'api_auth_token': data_source.api_auth_token,
+                }
+                df = self.read_api_data(api_params)
+            else:
+                raise ValueError(f"Unsupported source type: {data_source.source_type}")
+            
+            # Apply filters
+            if filters:
+                for column, value in filters.items():
+                    if column in df.columns:
+                        df = df[df[column] == value]
+            
+            # Select columns
+            if columns:
+                available_columns = [col for col in columns if col in df.columns]
+                if available_columns:
+                    df = df[available_columns]
+            
+            # Apply pagination
+            total_rows = len(df)
+            df_page = df.iloc[offset:offset + limit]
+            
+            # Convert to JSON-serializable format
+            preview_data = df_page.fillna('').to_dict('records')
+            
+            return {
+                'data': preview_data,
+                'total_rows': total_rows,
+                'columns': list(df.columns),
+                'data_types': df.dtypes.astype(str).to_dict(),
+                'offset': offset,
+                'limit': limit
+            }
+        
+        except Exception as e:
+            logger.error(f"Error getting data preview: {str(e)}")
+            raise
+    
+    @shared_task
+    def process_file_upload(self, data_source_id: int):
+        """
+        Process uploaded file asynchronously.
+        """
+        try:
+            data_source = DataSource.objects.get(id=data_source_id)
+            data_source.status = 'processing'
+            data_source.save()
+            
+            # Read and analyze file
+            df = self.read_file_data(
+                data_source.file.path,
+                data_source.file_type
+            )
+            
+            # Update data source with basic info
+            data_source.rows_count = len(df)
+            data_source.columns_count = len(df.columns)
+            data_source.status = 'completed'
+            data_source.save()
+            
+            # Create column records
+            self._create_column_records(data_source, df)
+            
+            # Generate quality report
+            analysis_service = DataAnalysisService()
+            analysis_service.generate_quality_report(data_source, df)
+            
+            logger.info(f"Successfully processed data source {data_source_id}")
+        
+        except Exception as e:
+            logger.error(f"Error processing data source {data_source_id}: {str(e)}")
+            data_source = DataSource.objects.get(id=data_source_id)
+            data_source.status = 'failed'
+            data_source.error_message = str(e)
+            data_source.save()
+    
+    def _create_column_records(self, data_source: DataSource, df: pd.DataFrame):
+        """
+        Create column records for data source.
+        """
+        for column_name in df.columns:
+            column_data = df[column_name]
+            
+            # Determine data type
+            if pd.api.types.is_numeric_dtype(column_data):
+                if pd.api.types.is_integer_dtype(column_data):
+                    data_type = 'integer'
+                else:
+                    data_type = 'float'
+            elif pd.api.types.is_datetime64_any_dtype(column_data):
+                data_type = 'datetime'
+            elif pd.api.types.is_bool_dtype(column_data):
+                data_type = 'boolean'
+            else:
+                data_type = 'string'
+            
+            # Calculate statistics
+            null_count = column_data.isnull().sum()
+            unique_count = column_data.nunique()
+            
+            column_stats = {
+                'null_count': int(null_count),
+                'unique_count': int(unique_count),
+            }
+            
+            # Add type-specific statistics
+            if data_type in ['integer', 'float']:
+                column_stats.update({
+                    'min_value': str(column_data.min()),
+                    'max_value': str(column_data.max()),
+                    'mean_value': float(column_data.mean()),
+                    'std_deviation': float(column_data.std()),
+                })
+                
+                # Detect outliers
+                q1 = column_data.quantile(0.25)
+                q3 = column_data.quantile(0.75)
+                iqr = q3 - q1
+                outliers = column_data[
+                    (column_data < q1 - 1.5 * iqr) | 
+                    (column_data > q3 + 1.5 * iqr)
+                ]
+                column_stats.update({
+                    'has_outliers': len(outliers) > 0,
+                    'outlier_count': len(outliers),
+                })
+            
+            # Sample values and value counts
+            sample_values = column_data.dropna().head(10).tolist()
+            value_counts = column_data.value_counts().head(10).to_dict()
+            
+            # Create column record
+            DataColumn.objects.create(
+                data_source=data_source,
+                name=column_name,
+                original_name=column_name,
+                data_type=data_type,
+                is_nullable=null_count > 0,
+                sample_values=sample_values,
+                value_counts=value_counts,
+                **column_stats
+            )
+
+
+class DataAnalysisService:
+    """
+    Service for data analysis and quality assessment.
+    """
+    
+    def analyze_data_source(self, data_source: DataSource, **options) -> Dict[str, Any]:
+        """
+        Perform comprehensive analysis of data source.
+        """
+        try:
+            # Read data
+            ingestion_service = DataIngestionService()
+            
+            if data_source.source_type == 'file':
+                df = ingestion_service.read_file_data(
+                    data_source.file.path,
+                    data_source.file_type
+                )
+            else:
+                # For non-file sources, get preview data
+                preview = ingestion_service.get_data_preview(
+                    data_source,
+                    limit=options.get('sample_size', 1000)
+                )
+                df = pd.DataFrame(preview['data'])
+            
+            analysis_result = {}
+            
+            # Basic statistics
+            if options.get('include_column_analysis', True):
+                analysis_result['column_analysis'] = self._analyze_columns(df)
+            
+            # Quality report
+            if options.get('include_quality_report', True):
+                quality_report = self.generate_quality_report(data_source, df)
+                analysis_result['quality_report'] = quality_report
+            
+            # Sample data
+            if options.get('include_sample_data', True):
+                analysis_result['sample_data'] = df.head(10).to_dict('records')
+            
+            return analysis_result
+        
+        except Exception as e:
+            logger.error(f"Error analyzing data source: {str(e)}")
+            raise
+    
+    def generate_quality_report(self, data_source: DataSource, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Generate data quality report.
+        """
+        try:
+            # Calculate quality scores
+            total_cells = df.size
+            null_cells = df.isnull().sum().sum()
+            completeness_score = ((total_cells - null_cells) / total_cells) * 100
+            
+            # Detect issues
+            issues = []
+            
+            # Missing values
+            missing_cols = df.isnull().sum()
+            for col, missing_count in missing_cols.items():
+                if missing_count > 0:
+                    percentage = (missing_count / len(df)) * 100
+                    severity = 'high' if percentage > 50 else 'medium' if percentage > 20 else 'low'
+                    issues.append({
+                        'type': 'missing_values',
+                        'column': col,
+                        'severity': severity,
+                        'description': f'{missing_count} missing values ({percentage:.1f}%)',
+                        'count': int(missing_count)
+                    })
+            
+            # Duplicate rows
+            duplicate_count = df.duplicated().sum()
+            if duplicate_count > 0:
+                issues.append({
+                    'type': 'duplicate_rows',
+                    'severity': 'medium',
+                    'description': f'{duplicate_count} duplicate rows found',
+                    'count': int(duplicate_count)
+                })
+            
+            # Data type inconsistencies
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    # Check for mixed types
+                    sample = df[col].dropna().head(100)
+                    types = set(type(x).__name__ for x in sample)
+                    if len(types) > 1:
+                        issues.append({
+                            'type': 'mixed_types',
+                            'column': col,
+                            'severity': 'medium',
+                            'description': f'Mixed data types detected: {", ".join(types)}',
+                            'types': list(types)
+                        })
+            
+            # Calculate overall scores
+            issue_counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+            for issue in issues:
+                issue_counts[issue['severity']] += 1
+            
+            # Overall quality score
+            penalty = (issue_counts['critical'] * 20 + 
+                      issue_counts['high'] * 10 + 
+                      issue_counts['medium'] * 5 + 
+                      issue_counts['low'] * 2)
+            overall_score = max(0, 100 - penalty)
+            
+            # Generate recommendations
+            recommendations = self._generate_recommendations(issues)
+            
+            # Create or update quality report
+            quality_report, created = DataQualityReport.objects.get_or_create(
+                data_source=data_source,
+                defaults={
+                    'overall_score': overall_score,
+                    'completeness_score': completeness_score,
+                    'consistency_score': 85,  # Placeholder
+                    'accuracy_score': 90,     # Placeholder
+                    'validity_score': 88,     # Placeholder
+                    'total_issues': len(issues),
+                    'critical_issues': issue_counts['critical'],
+                    'high_issues': issue_counts['high'],
+                    'medium_issues': issue_counts['medium'],
+                    'low_issues': issue_counts['low'],
+                    'issues': issues,
+                    'recommendations': recommendations,
+                }
+            )
+            
+            if not created:
+                # Update existing report
+                quality_report.overall_score = overall_score
+                quality_report.completeness_score = completeness_score
+                quality_report.total_issues = len(issues)
+                quality_report.critical_issues = issue_counts['critical']
+                quality_report.high_issues = issue_counts['high']
+                quality_report.medium_issues = issue_counts['medium']
+                quality_report.low_issues = issue_counts['low']
+                quality_report.issues = issues
+                quality_report.recommendations = recommendations
+                quality_report.save()
+            
+            return {
+                'overall_score': overall_score,
+                'completeness_score': completeness_score,
+                'total_issues': len(issues),
+                'issues': issues,
+                'recommendations': recommendations
+            }
+        
+        except Exception as e:
+            logger.error(f"Error generating quality report: {str(e)}")
+            raise
+    
+    def _analyze_columns(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Analyze individual columns.
+        """
+        column_analysis = {}
+        
+        for column in df.columns:
+            col_data = df[column]
+            
+            analysis = {
+                'data_type': str(col_data.dtype),
+                'null_count': int(col_data.isnull().sum()),
+                'null_percentage': float((col_data.isnull().sum() / len(df)) * 100),
+                'unique_count': int(col_data.nunique()),
+                'unique_percentage': float((col_data.nunique() / len(df)) * 100),
+            }
+            
+            # Type-specific analysis
+            if pd.api.types.is_numeric_dtype(col_data):
+                analysis.update({
+                    'min_value': float(col_data.min()),
+                    'max_value': float(col_data.max()),
+                    'mean_value': float(col_data.mean()),
+                    'median_value': float(col_data.median()),
+                    'std_deviation': float(col_data.std()),
+                })
+            
+            elif pd.api.types.is_datetime64_any_dtype(col_data):
+                analysis.update({
+                    'min_date': str(col_data.min()),
+                    'max_date': str(col_data.max()),
+                })
+            
+            else:
+                # String/object columns
+                analysis.update({
+                    'avg_length': float(col_data.astype(str).str.len().mean()),
+                    'max_length': int(col_data.astype(str).str.len().max()),
+                    'min_length': int(col_data.astype(str).str.len().min()),
+                })
+            
+            column_analysis[column] = analysis
+        
+        return column_analysis
+    
+    def _generate_recommendations(self, issues: List[Dict[str, Any]]) -> List[str]:
+        """
+        Generate recommendations based on detected issues.
+        """
+        recommendations = []
+        
+        # Group issues by type
+        issue_types = {}
+        for issue in issues:
+            issue_type = issue['type']
+            if issue_type not in issue_types:
+                issue_types[issue_type] = []
+            issue_types[issue_type].append(issue)
+        
+        # Generate recommendations
+        if 'missing_values' in issue_types:
+            missing_issues = issue_types['missing_values']
+            high_missing = [i for i in missing_issues if i['severity'] == 'high']
+            if high_missing:
+                recommendations.append(
+                    f"Consider removing columns with >50% missing values: "
+                    f"{', '.join([i['column'] for i in high_missing])}"
+                )
+            else:
+                recommendations.append(
+                    "Implement data validation rules to prevent missing values in critical columns"
+                )
+        
+        if 'duplicate_rows' in issue_types:
+            recommendations.append(
+                "Remove duplicate rows to improve data quality and reduce storage costs"
+            )
+        
+        if 'mixed_types' in issue_types:
+            recommendations.append(
+                "Standardize data types in columns with mixed types to improve consistency"
+            )
+        
+        # General recommendations
+        if len(issues) > 10:
+            recommendations.append(
+                "Consider implementing automated data quality checks in your data pipeline"
+            )
+        
+        return recommendations
