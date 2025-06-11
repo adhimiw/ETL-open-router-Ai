@@ -276,9 +276,8 @@ eetl-ai-platform/
 
 #### **1. Clone Repository**
 ```bash
-git clone https://github.com/adimiw/eetl-ai-platform.git
-cd "eetl using genrative ai"
-```
+git clone https://github.com/adimiw/ETL-open-router-Ai.git
+ cd ETL-open-router-Ai
 
 #### **2. Backend Setup**
 ```bash
