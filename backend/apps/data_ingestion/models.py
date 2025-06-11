@@ -262,3 +262,69 @@ class DataTransformation(models.Model):
     
     def __str__(self):
         return f"{self.name} - {self.get_transformation_type_display()}"
+
+
+class ETLOperation(models.Model):
+    """
+    Model for tracking ETL operations and their status.
+    """
+
+    class OperationType(models.TextChoices):
+        DATA_INGESTION = 'data_ingestion', 'Data Ingestion'
+        DATA_TRANSFORMATION = 'data_transformation', 'Data Transformation'
+        DATA_EXPORT = 'data_export', 'Data Export'
+        DATA_ANALYSIS = 'data_analysis', 'Data Analysis'
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        RUNNING = 'running', 'Running'
+        COMPLETED = 'completed', 'Completed'
+        FAILED = 'failed', 'Failed'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='etl_operations')
+    operation_type = models.CharField(max_length=30, choices=OperationType.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+
+    # Operation details
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    progress = models.IntegerField(default=0)  # 0-100
+
+    # Related objects
+    data_source = models.ForeignKey(
+        DataSource,
+        on_delete=models.CASCADE,
+        blank=True,
+        null=True,
+        related_name='operations'
+    )
+    transformation = models.ForeignKey(
+        DataTransformation,
+        on_delete=models.CASCADE,
+        blank=True,
+        null=True,
+        related_name='etl_operations'
+    )
+
+    # Execution details
+    started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    execution_time = models.FloatField(blank=True, null=True)  # in seconds
+
+    # Results and logs
+    result_data = models.JSONField(blank=True, null=True)
+    error_message = models.TextField(blank=True, null=True)
+    log_messages = models.JSONField(default=list)
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'etl_operations'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.get_operation_type_display()}) - {self.get_status_display()}"

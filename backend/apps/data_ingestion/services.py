@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import json
 import logging
+import time
 from typing import Dict, Any, List, Optional
 from django.conf import settings
 from celery import shared_task
@@ -14,6 +15,7 @@ import requests
 from io import StringIO
 
 from .models import DataSource, DataColumn, DataQualityReport, DataTransformation
+from apps.ai_engine.services import OpenRouterService
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,24 @@ class DataIngestionService:
         Read data from uploaded file.
         """
         try:
+            # Normalize file type - handle both MIME types and extensions
+            if file_type in ['text/csv', 'csv']:
+                file_type = 'csv'
+            elif file_type in ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xlsx']:
+                file_type = 'xlsx'
+            elif file_type in ['application/vnd.ms-excel', 'xls']:
+                file_type = 'xls'
+            elif file_type in ['application/json', 'json']:
+                file_type = 'json'
+            elif file_type in ['application/parquet', 'parquet']:
+                file_type = 'parquet'
+
+            # If still not recognized, try to detect from file extension
+            if file_type not in ['csv', 'xlsx', 'xls', 'json', 'parquet']:
+                file_extension = file_path.split('.')[-1].lower()
+                if file_extension in ['csv', 'xlsx', 'xls', 'json', 'parquet']:
+                    file_type = file_extension
+
             if file_type == 'csv':
                 # Try different encodings and separators
                 for encoding in ['utf-8', 'latin-1', 'cp1252']:
@@ -42,21 +62,21 @@ class DataIngestionService:
                         continue
                 else:
                     raise ValueError("Could not decode CSV file with any supported encoding")
-            
+
             elif file_type in ['xlsx', 'xls']:
                 df = pd.read_excel(file_path)
-            
+
             elif file_type == 'json':
                 df = pd.read_json(file_path)
-            
+
             elif file_type == 'parquet':
                 df = pd.read_parquet(file_path)
-            
+
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
-            
+
             return df
-        
+
         except Exception as e:
             logger.error(f"Error reading file {file_path}: {str(e)}")
             raise
@@ -363,13 +383,72 @@ class DataIngestionService:
             analysis_service.generate_quality_report(data_source, df)
             
             logger.info(f"Successfully processed data source {data_source_id}")
-        
+
         except Exception as e:
             logger.error(f"Error processing data source {data_source_id}: {str(e)}")
             data_source = DataSource.objects.get(id=data_source_id)
             data_source.status = 'failed'
             data_source.error_message = str(e)
             data_source.save()
+
+    def process_file_upload_with_ai(self, data_source_id: int) -> Dict[str, Any]:
+        """
+        Process uploaded file with AI-powered analysis and suggestions.
+        """
+        try:
+            data_source = DataSource.objects.get(id=data_source_id)
+            data_source.status = 'processing'
+            data_source.save()
+
+            # Read and analyze file
+            file_extension = data_source.file.name.split('.')[-1].lower()
+            df = self.read_file_data(data_source.file.path, file_extension)
+
+            # Update data source with basic info
+            data_source.rows_count = len(df)
+            data_source.columns_count = len(df.columns)
+            data_source.status = 'completed'
+            data_source.save()
+
+            # Create column records
+            self._create_column_records(data_source, df)
+
+            # Generate quality report
+            analysis_service = DataAnalysisService()
+            quality_report = analysis_service.generate_quality_report(data_source, df)
+
+            # Generate AI-powered insights and suggestions
+            ai_analysis = self._generate_ai_analysis(df, data_source)
+
+            # Combine all analysis results
+            complete_analysis = {
+                'data_summary': {
+                    'total_rows': len(df),
+                    'total_columns': len(df.columns),
+                    'file_size_mb': data_source.file_size_mb,
+                    'column_names': list(df.columns),
+                    'data_types': df.dtypes.astype(str).to_dict(),
+                    'memory_usage_mb': round(df.memory_usage(deep=True).sum() / (1024 * 1024), 2)
+                },
+                'sample_data': df.head(10).fillna('').to_dict('records'),
+                'column_statistics': self._get_detailed_column_stats(df),
+                'quality_report': quality_report,
+                'ai_insights': ai_analysis,
+                'visualization_suggestions': self._generate_visualization_suggestions(df),
+                'data_issues': self._identify_data_issues(df),
+                'recommendations': self._generate_data_recommendations(df, ai_analysis)
+            }
+
+            logger.info(f"Successfully processed data source {data_source_id} with AI analysis")
+            return complete_analysis
+
+        except Exception as e:
+            logger.error(f"Error processing data source {data_source_id}: {str(e)}")
+            data_source = DataSource.objects.get(id=data_source_id)
+            data_source.status = 'failed'
+            data_source.error_message = str(e)
+            data_source.save()
+            raise
     
     def _create_column_records(self, data_source: DataSource, df: pd.DataFrame):
         """
@@ -437,6 +516,351 @@ class DataIngestionService:
                 value_counts=value_counts,
                 **column_stats
             )
+
+    def _generate_ai_analysis(self, df: pd.DataFrame, data_source: DataSource) -> Dict[str, Any]:
+        """
+        Generate AI-powered insights and analysis suggestions.
+        """
+        try:
+            # Prepare data summary for AI
+            data_summary = {
+                'dataset_name': data_source.name,
+                'total_rows': len(df),
+                'total_columns': len(df.columns),
+                'columns': []
+            }
+
+            # Add column information
+            for col in df.columns:
+                col_info = {
+                    'name': col,
+                    'type': str(df[col].dtype),
+                    'null_count': int(df[col].isnull().sum()),
+                    'unique_count': int(df[col].nunique()),
+                    'sample_values': df[col].dropna().head(5).tolist()
+                }
+
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    col_info.update({
+                        'min': float(df[col].min()),
+                        'max': float(df[col].max()),
+                        'mean': float(df[col].mean()),
+                        'std': float(df[col].std())
+                    })
+
+                data_summary['columns'].append(col_info)
+
+            # Create AI prompt
+            prompt = f"""
+            Analyze this dataset and provide insights and suggestions:
+
+            Dataset: {data_summary['dataset_name']}
+            Rows: {data_summary['total_rows']:,}
+            Columns: {data_summary['total_columns']}
+
+            Column Details:
+            """
+
+            for col in data_summary['columns'][:10]:  # Limit to first 10 columns
+                prompt += f"\n- {col['name']} ({col['type']}): {col['unique_count']} unique values"
+                if col['null_count'] > 0:
+                    prompt += f", {col['null_count']} nulls"
+                if 'mean' in col:
+                    prompt += f", mean: {col['mean']:.2f}"
+
+            prompt += """
+
+            Please provide:
+            1. Key insights about this dataset
+            2. Potential data quality issues to watch for
+            3. Suggested analysis approaches
+            4. Business questions this data could answer
+            5. Recommended data transformations
+
+            Be specific and actionable in your recommendations.
+            """
+
+            # Get AI response
+            openrouter_service = OpenRouterService()
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are an expert data analyst. Provide detailed, actionable insights about datasets."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+
+            ai_response = openrouter_service.chat_completion(messages)
+
+            return {
+                'insights': ai_response['content'],
+                'model_used': ai_response['model'],
+                'tokens_used': ai_response['tokens_used'],
+                'analysis_timestamp': pd.Timestamp.now().isoformat()
+            }
+
+        except Exception as e:
+            logger.error(f"Error generating AI analysis: {str(e)}")
+            return {
+                'insights': "AI analysis temporarily unavailable. Please try again later.",
+                'error': str(e),
+                'analysis_timestamp': pd.Timestamp.now().isoformat()
+            }
+
+    def _get_detailed_column_stats(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Get detailed statistics for each column.
+        """
+        stats = {}
+
+        for col in df.columns:
+            col_data = df[col]
+            col_stats = {
+                'name': col,
+                'dtype': str(col_data.dtype),
+                'count': int(col_data.count()),
+                'null_count': int(col_data.isnull().sum()),
+                'null_percentage': round((col_data.isnull().sum() / len(df)) * 100, 2),
+                'unique_count': int(col_data.nunique()),
+                'unique_percentage': round((col_data.nunique() / len(df)) * 100, 2)
+            }
+
+            if pd.api.types.is_numeric_dtype(col_data):
+                col_stats.update({
+                    'min': float(col_data.min()),
+                    'max': float(col_data.max()),
+                    'mean': round(float(col_data.mean()), 4),
+                    'median': float(col_data.median()),
+                    'std': round(float(col_data.std()), 4),
+                    'q25': float(col_data.quantile(0.25)),
+                    'q75': float(col_data.quantile(0.75))
+                })
+
+                # Detect outliers
+                q1 = col_data.quantile(0.25)
+                q3 = col_data.quantile(0.75)
+                iqr = q3 - q1
+                outliers = col_data[(col_data < q1 - 1.5 * iqr) | (col_data > q3 + 1.5 * iqr)]
+                col_stats['outlier_count'] = len(outliers)
+
+            elif pd.api.types.is_datetime64_any_dtype(col_data):
+                col_stats.update({
+                    'min_date': str(col_data.min()),
+                    'max_date': str(col_data.max()),
+                    'date_range_days': (col_data.max() - col_data.min()).days
+                })
+
+            else:
+                # String/object columns
+                str_lengths = col_data.astype(str).str.len()
+                col_stats.update({
+                    'avg_length': round(float(str_lengths.mean()), 2),
+                    'min_length': int(str_lengths.min()),
+                    'max_length': int(str_lengths.max())
+                })
+
+            # Top values
+            value_counts = col_data.value_counts().head(5)
+            col_stats['top_values'] = [
+                {'value': str(val), 'count': int(count)}
+                for val, count in value_counts.items()
+            ]
+
+            stats[col] = col_stats
+
+        return stats
+
+    def _generate_visualization_suggestions(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        Generate visualization suggestions based on data types and characteristics.
+        """
+        suggestions = []
+
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+        datetime_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
+
+        # Histogram for numeric columns
+        for col in numeric_cols[:5]:  # Limit to first 5
+            suggestions.append({
+                'type': 'histogram',
+                'title': f'Distribution of {col}',
+                'columns': [col],
+                'description': f'Shows the frequency distribution of values in {col}',
+                'chart_type': 'histogram'
+            })
+
+        # Bar chart for categorical columns with reasonable cardinality
+        for col in categorical_cols[:3]:
+            unique_count = df[col].nunique()
+            if 2 <= unique_count <= 20:
+                suggestions.append({
+                    'type': 'bar_chart',
+                    'title': f'Count by {col}',
+                    'columns': [col],
+                    'description': f'Shows the frequency of each category in {col}',
+                    'chart_type': 'bar'
+                })
+
+        # Scatter plot for numeric pairs
+        if len(numeric_cols) >= 2:
+            suggestions.append({
+                'type': 'scatter_plot',
+                'title': f'{numeric_cols[0]} vs {numeric_cols[1]}',
+                'columns': numeric_cols[:2],
+                'description': f'Shows the relationship between {numeric_cols[0]} and {numeric_cols[1]}',
+                'chart_type': 'scatter'
+            })
+
+        # Time series for datetime columns
+        for col in datetime_cols[:2]:
+            if len(numeric_cols) > 0:
+                suggestions.append({
+                    'type': 'line_chart',
+                    'title': f'{numeric_cols[0]} over time',
+                    'columns': [col, numeric_cols[0]],
+                    'description': f'Shows how {numeric_cols[0]} changes over time',
+                    'chart_type': 'line'
+                })
+
+        # Correlation heatmap if multiple numeric columns
+        if len(numeric_cols) >= 3:
+            suggestions.append({
+                'type': 'heatmap',
+                'title': 'Correlation Matrix',
+                'columns': numeric_cols[:10],
+                'description': 'Shows correlations between numeric variables',
+                'chart_type': 'heatmap'
+            })
+
+        return suggestions
+
+    def _identify_data_issues(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        Identify potential data quality issues.
+        """
+        issues = []
+
+        # Missing values
+        missing_data = df.isnull().sum()
+        for col, missing_count in missing_data.items():
+            if missing_count > 0:
+                percentage = (missing_count / len(df)) * 100
+                severity = 'high' if percentage > 50 else 'medium' if percentage > 20 else 'low'
+                issues.append({
+                    'type': 'missing_values',
+                    'column': col,
+                    'severity': severity,
+                    'count': int(missing_count),
+                    'percentage': round(percentage, 2),
+                    'description': f'{col} has {missing_count} missing values ({percentage:.1f}%)'
+                })
+
+        # Duplicate rows
+        duplicate_count = df.duplicated().sum()
+        if duplicate_count > 0:
+            issues.append({
+                'type': 'duplicate_rows',
+                'severity': 'medium',
+                'count': int(duplicate_count),
+                'percentage': round((duplicate_count / len(df)) * 100, 2),
+                'description': f'Found {duplicate_count} duplicate rows'
+            })
+
+        # Columns with single value (no variance)
+        for col in df.columns:
+            if df[col].nunique() == 1:
+                issues.append({
+                    'type': 'no_variance',
+                    'column': col,
+                    'severity': 'low',
+                    'description': f'{col} has only one unique value'
+                })
+
+        # High cardinality categorical columns
+        for col in df.select_dtypes(include=['object']).columns:
+            unique_ratio = df[col].nunique() / len(df)
+            if unique_ratio > 0.9:
+                issues.append({
+                    'type': 'high_cardinality',
+                    'column': col,
+                    'severity': 'medium',
+                    'unique_count': int(df[col].nunique()),
+                    'description': f'{col} has very high cardinality ({df[col].nunique()} unique values)'
+                })
+
+        # Potential outliers in numeric columns
+        for col in df.select_dtypes(include=[np.number]).columns:
+            q1 = df[col].quantile(0.25)
+            q3 = df[col].quantile(0.75)
+            iqr = q3 - q1
+            outliers = df[(df[col] < q1 - 1.5 * iqr) | (df[col] > q3 + 1.5 * iqr)]
+
+            if len(outliers) > 0:
+                outlier_percentage = (len(outliers) / len(df)) * 100
+                severity = 'high' if outlier_percentage > 10 else 'medium' if outlier_percentage > 5 else 'low'
+                issues.append({
+                    'type': 'outliers',
+                    'column': col,
+                    'severity': severity,
+                    'count': len(outliers),
+                    'percentage': round(outlier_percentage, 2),
+                    'description': f'{col} has {len(outliers)} potential outliers ({outlier_percentage:.1f}%)'
+                })
+
+        return issues
+
+    def _generate_data_recommendations(self, df: pd.DataFrame, ai_analysis: Dict[str, Any]) -> List[str]:
+        """
+        Generate actionable recommendations for data analysis.
+        """
+        recommendations = []
+
+        # Basic recommendations based on data characteristics
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        categorical_cols = df.select_dtypes(include=['object']).columns
+
+        if len(numeric_cols) >= 2:
+            recommendations.append(
+                f"Explore correlations between numeric variables: {', '.join(numeric_cols[:5])}"
+            )
+
+        if len(categorical_cols) > 0:
+            recommendations.append(
+                f"Analyze distributions of categorical variables: {', '.join(categorical_cols[:3])}"
+            )
+
+        # Missing data recommendations
+        missing_data = df.isnull().sum()
+        high_missing = missing_data[missing_data > len(df) * 0.3]
+        if len(high_missing) > 0:
+            recommendations.append(
+                f"Consider removing or imputing columns with high missing data: {', '.join(high_missing.index)}"
+            )
+
+        # Data size recommendations
+        if len(df) > 100000:
+            recommendations.append(
+                "Consider sampling for initial exploration due to large dataset size"
+            )
+
+        if len(df.columns) > 20:
+            recommendations.append(
+                "Focus on key variables first - consider dimensionality reduction techniques"
+            )
+
+        # Specific analysis suggestions
+        recommendations.extend([
+            "Start with exploratory data analysis (EDA) to understand data distributions",
+            "Check for data quality issues before proceeding with analysis",
+            "Consider creating derived features from existing variables",
+            "Document any data transformations for reproducibility"
+        ])
+
+        return recommendations
 
 
 class DataAnalysisService:

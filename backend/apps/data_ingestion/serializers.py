@@ -4,7 +4,7 @@ Serializers for data ingestion app.
 
 from rest_framework import serializers
 from django.core.files.uploadedfile import UploadedFile
-from .models import DataSource, DataColumn, DataQualityReport, DataTransformation
+from .models import DataSource, DataColumn, DataQualityReport, DataTransformation, ETLOperation
 
 
 class DataColumnSerializer(serializers.ModelSerializer):
@@ -271,3 +271,23 @@ class APIConnectionSerializer(serializers.Serializer):
         default='none'
     )
     api_auth_token = serializers.CharField(required=False, write_only=True)
+
+
+class ETLOperationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for ETL operations.
+    """
+
+    class Meta:
+        model = ETLOperation
+        fields = [
+            'id', 'operation_type', 'status', 'name', 'description',
+            'progress', 'data_source', 'transformation', 'started_at',
+            'completed_at', 'execution_time', 'result_data',
+            'error_message', 'log_messages', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'status', 'progress', 'started_at', 'completed_at',
+            'execution_time', 'result_data', 'error_message',
+            'log_messages', 'created_at', 'updated_at'
+        ]

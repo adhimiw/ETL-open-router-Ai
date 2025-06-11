@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Upload Test - EETL AI Platform</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+        .btn {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .btn:hover {
+            background-color: #0056b3;
+        }
+        .btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .progress {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #007bff;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 CSV Upload Test - EETL AI Platform</h1>
+        <p>Test the CSV upload pipeline with AI analysis</p>
+        
+        <div class="upload-area" id="uploadArea">
+            <h3>📁 Drop CSV file here or click to select</h3>
+            <p>Supports CSV files up to 100MB</p>
+            <input type="file" id="fileInput" accept=".csv" style="display: none;">
+        </div>
+        
+        <div>
+            <label for="fileName">Dataset Name:</label><br>
+            <input type="text" id="fileName" placeholder="My Dataset" style="width: 100%; padding: 8px; margin: 5px 0;">
+        </div>
+        
+        <div>
+            <label for="fileDescription">Description:</label><br>
+            <textarea id="fileDescription" placeholder="Description of the dataset" style="width: 100%; padding: 8px; margin: 5px 0; height: 60px;"></textarea>
+        </div>
+        
+        <button class="btn" id="uploadBtn" onclick="uploadFile()" disabled>Upload & Analyze</button>
+        
+        <div id="progressContainer" class="hidden">
+            <p>Uploading and analyzing...</p>
+            <div class="progress">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <p id="progressText">0%</p>
+        </div>
+        
+        <div id="result" class="result hidden"></div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const result = document.getElementById('result');
+
+        // Upload area click handler
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // File input change handler
+        fileInput.addEventListener('change', (e) => {
+            handleFileSelect(e.target.files[0]);
+        });
+
+        // Drag and drop handlers
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            handleFileSelect(e.dataTransfer.files[0]);
+        });
+
+        function handleFileSelect(file) {
+            if (file && file.type === 'text/csv') {
+                selectedFile = file;
+                uploadArea.innerHTML = `
+                    <h3>✅ File Selected: ${file.name}</h3>
+                    <p>Size: ${(file.size / 1024).toFixed(2)} KB</p>
+                    <p>Click to select a different file</p>
+                `;
+                uploadBtn.disabled = false;
+                
+                // Auto-fill name if empty
+                if (!document.getElementById('fileName').value) {
+                    document.getElementById('fileName').value = file.name.replace('.csv', '');
+                }
+            } else {
+                alert('Please select a CSV file');
+            }
+        }
+
+        async function uploadFile() {
+            if (!selectedFile) {
+                alert('Please select a file first');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('name', document.getElementById('fileName').value || selectedFile.name);
+            formData.append('description', document.getElementById('fileDescription').value || 'Uploaded via test interface');
+
+            // Show progress
+            progressContainer.classList.remove('hidden');
+            uploadBtn.disabled = true;
+            result.classList.add('hidden');
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/data/upload/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                progressBar.style.width = '100%';
+                progressText.textContent = '100%';
+
+                if (response.ok) {
+                    const data = await response.json();
+                    showResult('success', formatSuccessResult(data));
+                } else {
+                    const errorData = await response.text();
+                    showResult('error', `Upload failed (${response.status}): ${errorData}`);
+                }
+            } catch (error) {
+                showResult('error', `Network error: ${error.message}`);
+            } finally {
+                progressContainer.classList.add('hidden');
+                uploadBtn.disabled = false;
+            }
+        }
+
+        function showResult(type, message) {
+            result.className = `result ${type}`;
+            result.textContent = message;
+            result.classList.remove('hidden');
+        }
+
+        function formatSuccessResult(data) {
+            const analysis = data.analysis || {};
+            const summary = analysis.data_summary || {};
+            const aiInsights = analysis.ai_insights || {};
+            const quality = analysis.quality_report || {};
+            
+            return `🎉 Upload Successful!
+
+📊 Data Summary:
+• Rows: ${summary.total_rows || 'N/A'}
+• Columns: ${summary.total_columns || 'N/A'}
+• Size: ${summary.memory_usage_mb || 'N/A'} MB
+• Columns: ${(summary.column_names || []).join(', ')}
+
+🤖 AI Analysis:
+• Model: ${aiInsights.model_used || 'N/A'}
+• Tokens Used: ${aiInsights.tokens_used || 'N/A'}
+• Insights: ${(aiInsights.insights || '').substring(0, 300)}...
+
+📈 Quality Score: ${quality.overall_score || 'N/A'}/100
+
+✅ Your data has been successfully uploaded and analyzed!`;
+        }
+
+        // Simulate progress for demo
+        function simulateProgress() {
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += Math.random() * 20;
+                if (progress >= 90) {
+                    clearInterval(interval);
+                    progress = 90;
+                }
+                progressBar.style.width = progress + '%';
+                progressText.textContent = Math.round(progress) + '%';
+            }, 200);
+        }
+    </script>
+</body>
+</html>

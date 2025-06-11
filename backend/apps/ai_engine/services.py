@@ -3,17 +3,17 @@ AI Engine services for OpenRouter integration and RAG implementation.
 """
 
 import openai
-import chromadb
+# import chromadb
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional
 from django.conf import settings
-from sentence_transformers import SentenceTransformer
+# from sentence_transformers import SentenceTransformer
 import json
 import time
 import logging
 
-from .models import AIModel, EmbeddingModel, VectorStore, Conversation, Message
+# from .models import AIModel, EmbeddingModel, VectorStore, Conversation, Message
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +68,12 @@ class OpenRouterService:
                 'finish_reason': response.choices[0].finish_reason
             }
             
-            # Update model usage statistics
-            try:
-                ai_model = AIModel.objects.get(model_id=self.model)
-                ai_model.increment_usage(response.usage.total_tokens)
-            except AIModel.DoesNotExist:
-                logger.warning(f"AI model {self.model} not found in database")
+            # Update model usage statistics (commented out for now)
+            # try:
+            #     ai_model = AIModel.objects.get(model_id=self.model)
+            #     ai_model.increment_usage(response.usage.total_tokens)
+            # except AIModel.DoesNotExist:
+            #     logger.warning(f"AI model {self.model} not found in database")
             
             return result
             
@@ -210,50 +210,34 @@ class EmbeddingService:
     """
     Service for generating embeddings for RAG implementation.
     """
-    
+
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        self.model = SentenceTransformer(model_name)
+        # self.model = SentenceTransformer(model_name)
         self.model_name = model_name
     
     def generate_embeddings(self, texts: List[str]) -> np.ndarray:
         """Generate embeddings for a list of texts."""
-        try:
-            start_time = time.time()
-            embeddings = self.model.encode(texts)
-            processing_time = time.time() - start_time
-            
-            # Update embedding model statistics
-            try:
-                embedding_model = EmbeddingModel.objects.get(model_id=self.model_name)
-                embedding_model.total_embeddings += len(texts)
-                embedding_model.avg_embedding_time = (
-                    embedding_model.avg_embedding_time + processing_time
-                ) / 2
-                embedding_model.save()
-            except EmbeddingModel.DoesNotExist:
-                logger.warning(f"Embedding model {self.model_name} not found in database")
-            
-            return embeddings
-            
-        except Exception as e:
-            logger.error(f"Embedding generation error: {str(e)}")
-            raise Exception(f"Embedding service error: {str(e)}")
+        # Temporarily disabled - requires sentence-transformers
+        raise NotImplementedError("Embedding service temporarily disabled")
     
     def generate_single_embedding(self, text: str) -> np.ndarray:
         """Generate embedding for a single text."""
-        return self.generate_embeddings([text])[0]
+        # Temporarily disabled - requires sentence-transformers
+        raise NotImplementedError("Embedding service temporarily disabled")
 
 
 class VectorStoreService:
     """
     Service for managing vector stores using ChromaDB.
     """
-    
+
     def __init__(self):
-        self.client = chromadb.PersistentClient(
-            path=settings.CHROMA_PERSIST_DIRECTORY
-        )
-        self.embedding_service = EmbeddingService()
+        # Temporarily disabled - requires ChromaDB
+        # self.client = chromadb.PersistentClient(
+        #     path=settings.CHROMA_PERSIST_DIRECTORY
+        # )
+        # self.embedding_service = EmbeddingService()
+        pass
     
     def create_collection(
         self,
@@ -261,39 +245,10 @@ class VectorStoreService:
         documents: List[str],
         metadatas: List[Dict[str, Any]] = None,
         ids: List[str] = None
-    ) -> chromadb.Collection:
+    ):
         """Create a new vector collection."""
-        try:
-            # Delete existing collection if it exists
-            try:
-                self.client.delete_collection(collection_name)
-            except:
-                pass
-            
-            collection = self.client.create_collection(
-                name=collection_name,
-                metadata={"hnsw:space": "cosine"}
-            )
-            
-            # Generate embeddings
-            embeddings = self.embedding_service.generate_embeddings(documents)
-            
-            # Add documents to collection
-            if ids is None:
-                ids = [f"doc_{i}" for i in range(len(documents))]
-            
-            collection.add(
-                embeddings=embeddings.tolist(),
-                documents=documents,
-                metadatas=metadatas or [{}] * len(documents),
-                ids=ids
-            )
-            
-            return collection
-            
-        except Exception as e:
-            logger.error(f"Vector store creation error: {str(e)}")
-            raise Exception(f"Vector store service error: {str(e)}")
+        # Temporarily disabled - requires ChromaDB
+        raise NotImplementedError("Vector store service temporarily disabled")
     
     def query_collection(
         self,
@@ -302,28 +257,8 @@ class VectorStoreService:
         n_results: int = 5
     ) -> Dict[str, Any]:
         """Query a vector collection."""
-        try:
-            collection = self.client.get_collection(collection_name)
-            
-            # Generate query embedding
-            query_embedding = self.embedding_service.generate_single_embedding(query_text)
-            
-            # Search collection
-            results = collection.query(
-                query_embeddings=[query_embedding.tolist()],
-                n_results=n_results
-            )
-            
-            return {
-                'documents': results['documents'][0],
-                'metadatas': results['metadatas'][0],
-                'distances': results['distances'][0],
-                'ids': results['ids'][0]
-            }
-            
-        except Exception as e:
-            logger.error(f"Vector store query error: {str(e)}")
-            raise Exception(f"Vector store query error: {str(e)}")
+        # Temporarily disabled - requires ChromaDB
+        raise NotImplementedError("Vector store service temporarily disabled")
     
     def add_documents(
         self,
@@ -333,26 +268,8 @@ class VectorStoreService:
         ids: List[str] = None
     ):
         """Add documents to existing collection."""
-        try:
-            collection = self.client.get_collection(collection_name)
-            
-            # Generate embeddings
-            embeddings = self.embedding_service.generate_embeddings(documents)
-            
-            if ids is None:
-                existing_count = collection.count()
-                ids = [f"doc_{existing_count + i}" for i in range(len(documents))]
-            
-            collection.add(
-                embeddings=embeddings.tolist(),
-                documents=documents,
-                metadatas=metadatas or [{}] * len(documents),
-                ids=ids
-            )
-            
-        except Exception as e:
-            logger.error(f"Vector store add documents error: {str(e)}")
-            raise Exception(f"Vector store add documents error: {str(e)}")
+        # Temporarily disabled - requires ChromaDB
+        raise NotImplementedError("Vector store service temporarily disabled")
 
 
 class RAGService:
@@ -362,7 +279,7 @@ class RAGService:
     
     def __init__(self):
         self.openrouter_service = OpenRouterService()
-        self.vector_service = VectorStoreService()
+        # self.vector_service = VectorStoreService()
     
     def query_with_context(
         self,
@@ -374,61 +291,8 @@ class RAGService:
         """
         Answer query using RAG with retrieved context.
         """
-        try:
-            # Retrieve relevant context
-            context_results = self.vector_service.query_collection(
-                collection_name=collection_name,
-                query_text=query,
-                n_results=n_context_docs
-            )
-            
-            # Format context for AI
-            context_text = "\n\n".join([
-                f"Context {i+1}: {doc}"
-                for i, doc in enumerate(context_results['documents'])
-            ])
-            
-            # Build conversation messages
-            messages = []
-            
-            # System prompt with context
-            system_prompt = f"""
-            You are an expert data analyst assistant. Use the provided context to answer questions accurately.
-            
-            Context Information:
-            {context_text}
-            
-            Instructions:
-            1. Base your answers on the provided context
-            2. If the context doesn't contain enough information, say so
-            3. Provide specific, actionable insights
-            4. Use data-driven reasoning
-            5. Be concise but comprehensive
-            """
-            
-            messages.append({"role": "system", "content": system_prompt})
-            
-            # Add conversation history
-            if conversation_history:
-                messages.extend(conversation_history[-5:])  # Last 5 messages for context
-            
-            # Add current query
-            messages.append({"role": "user", "content": query})
-            
-            # Generate response
-            response = self.openrouter_service.chat_completion(messages)
-            
-            return {
-                'answer': response['content'],
-                'context_used': context_results['documents'],
-                'context_sources': context_results['metadatas'],
-                'tokens_used': response['tokens_used'],
-                'processing_time': response['processing_time']
-            }
-            
-        except Exception as e:
-            logger.error(f"RAG query error: {str(e)}")
-            raise Exception(f"RAG service error: {str(e)}")
+        # Temporarily disabled - requires ChromaDB
+        raise NotImplementedError("RAG service temporarily disabled")
     
     def create_data_context(
         self,
@@ -439,60 +303,5 @@ class RAGService:
         """
         Create vector store collection for a data source.
         """
-        try:
-            collection_name = f"data_source_{data_source_id}"
-            
-            # Prepare documents for embedding
-            documents = []
-            metadatas = []
-            
-            # Add data summary information
-            summary_text = f"""
-            Data Source Summary:
-            - Total rows: {data_summary.get('total_rows', 'Unknown')}
-            - Total columns: {data_summary.get('total_columns', 'Unknown')}
-            - Data types: {', '.join(data_summary.get('data_types', []))}
-            """
-            documents.append(summary_text)
-            metadatas.append({"type": "summary", "source_id": data_source_id})
-            
-            # Add column information
-            for col_info in data_summary.get('columns', []):
-                col_text = f"""
-                Column: {col_info['name']}
-                Type: {col_info['type']}
-                Null values: {col_info.get('null_count', 0)}
-                Unique values: {col_info.get('unique_count', 0)}
-                Description: {col_info.get('description', 'No description')}
-                """
-                documents.append(col_text)
-                metadatas.append({
-                    "type": "column",
-                    "column_name": col_info['name'],
-                    "source_id": data_source_id
-                })
-            
-            # Add sample data insights
-            if sample_data is not None and not sample_data.empty:
-                sample_text = f"""
-                Sample Data Insights:
-                {sample_data.describe().to_string()}
-                
-                Sample rows:
-                {sample_data.head().to_string()}
-                """
-                documents.append(sample_text)
-                metadatas.append({"type": "sample", "source_id": data_source_id})
-            
-            # Create vector collection
-            self.vector_service.create_collection(
-                collection_name=collection_name,
-                documents=documents,
-                metadatas=metadatas
-            )
-            
-            return collection_name
-            
-        except Exception as e:
-            logger.error(f"Data context creation error: {str(e)}")
-            raise Exception(f"Data context creation error: {str(e)}")
+        # Temporarily disabled - requires ChromaDB
+        raise NotImplementedError("RAG service temporarily disabled")

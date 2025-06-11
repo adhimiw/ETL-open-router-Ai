@@ -9,6 +9,7 @@ from . import views
 router = DefaultRouter()
 router.register(r'sources', views.DataSourceViewSet, basename='datasource')
 router.register(r'transformations', views.DataTransformationViewSet, basename='transformation')
+router.register(r'operations', views.ETLOperationViewSet, basename='operation')
 
 urlpatterns = [
     # Router URLs

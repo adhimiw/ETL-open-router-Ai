@@ -304,6 +304,13 @@ export const visualizationApi = {
   generateReport: (id: string, format: string) =>
     apiService.post(`/viz/reports/${id}/generate/`, { format }),
   
+  // Chart configuration and suggestions
+  generateChartConfig: (data: any) =>
+    apiService.post('/viz/chart-config/', data),
+
+  suggestVisualizations: (data: any) =>
+    apiService.post('/viz/suggestions/', data),
+
   // Export
   exportData: (data: any) =>
     apiService.post('/viz/export/', data, {

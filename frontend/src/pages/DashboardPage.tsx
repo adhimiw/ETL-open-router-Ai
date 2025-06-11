@@ -1,18 +1,26 @@
 /**
- * Dashboard page component
+ * ETL Dashboard page component
+ * Main interface for the EETL AI Platform
  */
 
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ChartBarIcon,
   ChatBubbleLeftRightIcon,
   CloudArrowUpIcon,
   DocumentTextIcon,
-  UsersIcon,
   CpuChipIcon,
+  PlayIcon,
+  ExclamationTriangleIcon,
+  CheckCircleIcon,
 } from '@heroicons/react/24/outline'
 import { useAuthStore } from '@/stores/authStore'
+import { browserMCP, DataSource, ETLOperation } from '@/services/browserMcp'
+import DataIngestionPanel from '@/components/etl/DataIngestionPanel'
+import NaturalLanguageQuery from '@/components/etl/NaturalLanguageQuery'
+import DataVisualization from '@/components/etl/DataVisualization'
+import toast from 'react-hot-toast'
 
 const stats = [
   { name: 'Total Data Sources', stat: '12', icon: CloudArrowUpIcon, change: '+4.75%', changeType: 'positive' },
@@ -89,176 +97,324 @@ const recentActivity = [
 
 const DashboardPage: React.FC = () => {
   const { user } = useAuthStore()
+  const [dataSources, setDataSources] = useState<DataSource[]>([])
+  const [etlOperations, setETLOperations] = useState<ETLOperation[]>([])
+  const [selectedDataSource, setSelectedDataSource] = useState<string>()
+  const [activeTab, setActiveTab] = useState<'overview' | 'ingestion' | 'query' | 'visualization' | 'monitoring'>('overview')
+  const [isLoading, setIsLoading] = useState(true)
+  const [connectionStatus, setConnectionStatus] = useState(false)
+
+  useEffect(() => {
+    initializeDashboard()
+
+    // Set up real-time monitoring
+    const interval = setInterval(() => {
+      if (activeTab === 'monitoring') {
+        loadETLOperations()
+      }
+    }, 5000)
+
+    return () => clearInterval(interval)
+  }, [activeTab])
+
+  const initializeDashboard = async () => {
+    setIsLoading(true)
+    try {
+      // Connect to backend via BrowserMCP
+      const connected = await browserMCP.connect()
+      setConnectionStatus(connected)
+
+      if (connected) {
+        await Promise.all([
+          loadDataSources(),
+          loadETLOperations(),
+        ])
+        toast.success('Dashboard initialized successfully!')
+      } else {
+        toast.error('Failed to connect to backend')
+      }
+    } catch (error) {
+      console.error('Dashboard initialization error:', error)
+      toast.error('Failed to initialize dashboard')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const loadDataSources = async () => {
+    try {
+      const sources = await browserMCP.getDataSources()
+      setDataSources(sources)
+    } catch (error) {
+      console.error('Failed to load data sources:', error)
+    }
+  }
+
+  const loadETLOperations = async () => {
+    try {
+      const operations = await browserMCP.getETLOperations()
+      setETLOperations(operations)
+    } catch (error) {
+      console.error('Failed to load ETL operations:', error)
+    }
+  }
+
+  const handleDataSourceAdded = (dataSource: DataSource) => {
+    setDataSources(prev => [dataSource, ...prev])
+    setSelectedDataSource(dataSource.id)
+    toast.success(`Data source "${dataSource.name}" added successfully!`)
+  }
 
   return (
-    <div>
+    <div className="space-y-6">
       {/* Page header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">
-          Welcome back, {user?.firstName}! 👋
-        </h1>
-        <p className="mt-2 text-gray-600">
-          Here's what's happening with your data today.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            ETL AI Platform Dashboard
+          </h1>
+          <p className="mt-2 text-gray-600">
+            Welcome back, {user?.firstName}! Manage your data workflows with AI assistance.
+          </p>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            connectionStatus
+              ? 'bg-green-100 text-green-800'
+              : 'bg-red-100 text-red-800'
+          }`}>
+            <div className={`w-2 h-2 rounded-full mr-1 ${
+              connectionStatus ? 'bg-green-400' : 'bg-red-400'
+            }`} />
+            {connectionStatus ? 'Connected' : 'Disconnected'}
+          </div>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="mb-8">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Overview</h2>
+      {/* Navigation Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          {[
+            { id: 'overview', name: 'Overview', icon: ChartBarIcon },
+            { id: 'ingestion', name: 'Data Ingestion', icon: CloudArrowUpIcon },
+            { id: 'query', name: 'AI Query', icon: ChatBubbleLeftRightIcon },
+            { id: 'visualization', name: 'Visualization', icon: ChartBarIcon },
+            { id: 'monitoring', name: 'Monitoring', icon: CpuChipIcon },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`
+                flex items-center py-4 px-1 border-b-2 font-medium text-sm
+                ${activeTab === tab.id
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }
+              `}
+            >
+              <tab.icon className="mr-2 h-5 w-5" />
+              {tab.name}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      <div className="mt-6">
+        {activeTab === 'overview' && (
+          <OverviewTab
+            dataSources={dataSources}
+            etlOperations={etlOperations}
+            isLoading={isLoading}
+          />
+        )}
+
+        {activeTab === 'ingestion' && (
+          <DataIngestionPanel onDataSourceAdded={handleDataSourceAdded} />
+        )}
+
+        {activeTab === 'query' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              <NaturalLanguageQuery
+                dataSourceId={selectedDataSource}
+                onQueryResult={(result) => {
+                  // Handle query result
+                  console.log('Query result:', result)
+                }}
+              />
+            </div>
+            <div>
+              <DataSourceSelector
+                dataSources={dataSources}
+                selectedDataSource={selectedDataSource}
+                onSelect={setSelectedDataSource}
+              />
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'visualization' && (
+          <DataVisualization dataSourceId={selectedDataSource} />
+        )}
+
+        {activeTab === 'monitoring' && (
+          <MonitoringTab
+            etlOperations={etlOperations}
+            onRefresh={loadETLOperations}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Overview Tab Component
+const OverviewTab: React.FC<{
+  dataSources: DataSource[]
+  etlOperations: ETLOperation[]
+  isLoading: boolean
+}> = ({ dataSources, etlOperations, isLoading }) => {
+  const stats = [
+    {
+      name: 'Total Data Sources',
+      stat: dataSources.length.toString(),
+      icon: CloudArrowUpIcon,
+      change: '+12%',
+      changeType: 'positive'
+    },
+    {
+      name: 'Active Operations',
+      stat: etlOperations.filter(op => op.status === 'running').length.toString(),
+      icon: PlayIcon,
+      change: '+5%',
+      changeType: 'positive'
+    },
+    {
+      name: 'Completed Today',
+      stat: etlOperations.filter(op => op.status === 'completed').length.toString(),
+      icon: CheckCircleIcon,
+      change: '+18%',
+      changeType: 'positive'
+    },
+    {
+      name: 'Failed Operations',
+      stat: etlOperations.filter(op => op.status === 'failed').length.toString(),
+      icon: ExclamationTriangleIcon,
+      change: '-8%',
+      changeType: 'negative'
+    },
+  ]
+
+  if (isLoading) {
+    return (
+      <div className="animate-pulse space-y-6">
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {stats.map((item) => (
-            <div key={item.name} className="card">
-              <div className="card-body">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <item.icon className="h-6 w-6 text-gray-400" aria-hidden="true" />
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">{item.name}</dt>
-                      <dd className="flex items-baseline">
-                        <div className="text-2xl font-semibold text-gray-900">{item.stat}</div>
-                        <div
-                          className={`ml-2 flex items-baseline text-sm font-semibold ${
-                            item.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
-                          }`}
-                        >
-                          {item.changeType === 'positive' ? (
-                            <svg
-                              className="self-center flex-shrink-0 h-5 w-5 text-green-500"
-                              fill="currentColor"
-                              viewBox="0 0 20 20"
-                              aria-hidden="true"
-                            >
-                              <path
-                                fillRule="evenodd"
-                                d="M10 17a.75.75 0 01-.75-.75V5.612L5.29 9.77a.75.75 0 01-1.08-1.04l5.25-5.5a.75.75 0 011.08 0l5.25 5.5a.75.75 0 11-1.08 1.04L10.75 5.612V16.25A.75.75 0 0110 17z"
-                                clipRule="evenodd"
-                              />
-                            </svg>
-                          ) : (
-                            <svg
-                              className="self-center flex-shrink-0 h-5 w-5 text-red-500"
-                              fill="currentColor"
-                              viewBox="0 0 20 20"
-                              aria-hidden="true"
-                            >
-                              <path
-                                fillRule="evenodd"
-                                d="M10 3a.75.75 0 01.75.75v10.638l3.96-4.158a.75.75 0 111.08 1.04l-5.25 5.5a.75.75 0 01-1.08 0l-5.25-5.5a.75.75 0 111.08-1.04l3.96 4.158V3.75A.75.75 0 0110 3z"
-                                clipRule="evenodd"
-                              />
-                            </svg>
-                          )}
-                          <span className="sr-only">
-                            {item.changeType === 'positive' ? 'Increased' : 'Decreased'} by
-                          </span>
-                          {item.change}
-                        </div>
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="bg-white p-6 rounded-lg shadow">
+              <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+              <div className="h-8 bg-gray-200 rounded w-1/2"></div>
             </div>
           ))}
         </div>
       </div>
+    )
+  }
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        {/* Quick Actions */}
-        <div>
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {quickActions.map((action) => (
-              <Link
-                key={action.name}
-                to={action.href}
-                className="card hover:shadow-md transition-shadow duration-200"
-              >
-                <div className="card-body">
-                  <div className="flex items-center">
-                    <div className={`flex-shrink-0 p-3 rounded-lg ${action.color}`}>
-                      <action.icon className="h-6 w-6 text-white" aria-hidden="true" />
-                    </div>
-                    <div className="ml-4">
-                      <h3 className="text-sm font-medium text-gray-900">{action.name}</h3>
-                      <p className="text-sm text-gray-500">{action.description}</p>
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
-
-        {/* Recent Activity */}
-        <div>
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Recent Activity</h2>
-          <div className="card">
+  return (
+    <div className="space-y-6">
+      {/* Stats */}
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        {stats.map((item) => (
+          <div key={item.name} className="card">
             <div className="card-body">
-              <div className="flow-root">
-                <ul role="list" className="-mb-8">
-                  {recentActivity.map((activity, activityIdx) => (
-                    <li key={activity.id}>
-                      <div className="relative pb-8">
-                        {activityIdx !== recentActivity.length - 1 ? (
-                          <span
-                            className="absolute left-4 top-4 -ml-px h-full w-0.5 bg-gray-200"
-                            aria-hidden="true"
-                          />
-                        ) : null}
-                        <div className="relative flex space-x-3">
-                          <div>
-                            <span className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center ring-8 ring-white">
-                              <activity.icon className="h-4 w-4 text-gray-500" aria-hidden="true" />
-                            </span>
-                          </div>
-                          <div className="flex min-w-0 flex-1 justify-between space-x-4 pt-1.5">
-                            <div>
-                              <p className="text-sm font-medium text-gray-900">{activity.title}</p>
-                              <p className="text-sm text-gray-500">{activity.description}</p>
-                            </div>
-                            <div className="whitespace-nowrap text-right text-sm text-gray-500">
-                              <time>{activity.time}</time>
-                            </div>
-                          </div>
-                        </div>
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <item.icon className="h-6 w-6 text-gray-400" aria-hidden="true" />
+                </div>
+                <div className="ml-5 w-0 flex-1">
+                  <dl>
+                    <dt className="text-sm font-medium text-gray-500 truncate">{item.name}</dt>
+                    <dd className="flex items-baseline">
+                      <div className="text-2xl font-semibold text-gray-900">{item.stat}</div>
+                      <div
+                        className={`ml-2 flex items-baseline text-sm font-semibold ${
+                          item.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
+                        }`}
+                      >
+                        {item.changeType === 'positive' ? '↗' : '↘'}
+                        <span className="sr-only">
+                          {item.changeType === 'positive' ? 'Increased' : 'Decreased'} by
+                        </span>
+                        {item.change}
                       </div>
-                    </li>
-                  ))}
-                </ul>
+                    </dd>
+                  </dl>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        ))}
       </div>
 
-      {/* AI Insights */}
-      <div className="mt-8">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">AI Insights</h2>
+      {/* Recent Data Sources */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card">
+          <div className="card-header">
+            <h3 className="text-lg font-medium text-gray-900">Recent Data Sources</h3>
+          </div>
           <div className="card-body">
-            <div className="flex items-start space-x-4">
-              <div className="flex-shrink-0">
-                <CpuChipIcon className="h-6 w-6 text-primary-600" />
+            {dataSources.length === 0 ? (
+              <div className="text-center py-6">
+                <CloudArrowUpIcon className="mx-auto h-12 w-12 text-gray-400" />
+                <p className="mt-2 text-sm text-gray-500">No data sources yet</p>
+                <p className="text-xs text-gray-400">Upload your first dataset to get started</p>
               </div>
-              <div className="flex-1">
-                <h3 className="text-sm font-medium text-gray-900 mb-2">
-                  💡 Data Quality Insights
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
-                  Your sales data shows 95% completeness with minor issues in the customer_age column. 
-                  Consider implementing data validation rules for future uploads.
-                </p>
-                <div className="flex space-x-3">
-                  <Link to="/data-sources" className="btn-primary btn-sm">
-                    View Details
-                  </Link>
-                  <button className="btn-outline btn-sm">
-                    Dismiss
-                  </button>
-                </div>
+            ) : (
+              <div className="space-y-3">
+                {dataSources.slice(0, 5).map((source) => (
+                  <div key={source.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-2 h-2 rounded-full ${
+                        source.status === 'completed' ? 'bg-green-400' :
+                        source.status === 'processing' ? 'bg-yellow-400' : 'bg-red-400'
+                      }`} />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{source.name}</p>
+                        <p className="text-xs text-gray-500">{source.type} • {source.rowCount} rows</p>
+                      </div>
+                    </div>
+                    <span className="text-xs text-gray-400">{source.lastUpdated}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <h3 className="text-lg font-medium text-gray-900">System Health</h3>
+          </div>
+          <div className="card-body">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">Backend Connection</span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  Healthy
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">AI Engine</span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  Active
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">Data Processing</span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  Running
+                </span>
               </div>
             </div>
           </div>
@@ -267,5 +423,118 @@ const DashboardPage: React.FC = () => {
     </div>
   )
 }
+
+// Data Source Selector Component
+const DataSourceSelector: React.FC<{
+  dataSources: DataSource[]
+  selectedDataSource?: string
+  onSelect: (id: string) => void
+}> = ({ dataSources, selectedDataSource, onSelect }) => (
+  <div className="card">
+    <div className="card-header">
+      <h3 className="text-lg font-medium text-gray-900">Select Data Source</h3>
+    </div>
+    <div className="card-body">
+      {dataSources.length === 0 ? (
+        <div className="text-center py-6">
+          <DocumentTextIcon className="mx-auto h-8 w-8 text-gray-400" />
+          <p className="mt-2 text-sm text-gray-500">No data sources available</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {dataSources.map((source) => (
+            <button
+              key={source.id}
+              onClick={() => onSelect(source.id)}
+              className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                selectedDataSource === source.id
+                  ? 'border-primary-500 bg-primary-50'
+                  : 'border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{source.name}</p>
+                  <p className="text-xs text-gray-500">{source.type} • {source.rowCount} rows</p>
+                </div>
+                <div className={`w-2 h-2 rounded-full ${
+                  source.status === 'completed' ? 'bg-green-400' :
+                  source.status === 'processing' ? 'bg-yellow-400' : 'bg-red-400'
+                }`} />
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+)
+
+// Monitoring Tab Component
+const MonitoringTab: React.FC<{
+  etlOperations: ETLOperation[]
+  onRefresh: () => void
+}> = ({ etlOperations, onRefresh }) => (
+  <div className="space-y-6">
+    <div className="flex items-center justify-between">
+      <h3 className="text-lg font-medium text-gray-900">ETL Operations Monitor</h3>
+      <button onClick={onRefresh} className="btn-outline btn-sm">
+        Refresh
+      </button>
+    </div>
+
+    <div className="card">
+      <div className="card-body">
+        {etlOperations.length === 0 ? (
+          <div className="text-center py-8">
+            <CpuChipIcon className="mx-auto h-12 w-12 text-gray-400" />
+            <p className="mt-2 text-sm text-gray-500">No operations running</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {etlOperations.map((operation) => (
+              <div key={operation.id} className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-3 h-3 rounded-full ${
+                      operation.status === 'completed' ? 'bg-green-400' :
+                      operation.status === 'running' ? 'bg-blue-400 animate-pulse' :
+                      operation.status === 'failed' ? 'bg-red-400' : 'bg-gray-400'
+                    }`} />
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{operation.type}</p>
+                      <p className="text-xs text-gray-500">ID: {operation.id}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-gray-900">{operation.status}</p>
+                    <p className="text-xs text-gray-500">{operation.progress}% complete</p>
+                  </div>
+                </div>
+
+                {operation.status === 'running' && (
+                  <div className="mt-3">
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${operation.progress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {operation.error && (
+                  <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                    {operation.error}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)
 
 export default DashboardPage

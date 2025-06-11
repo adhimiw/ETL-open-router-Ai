@@ -17,6 +17,7 @@ import AnalyticsPage from '@/pages/AnalyticsPage'
 import SettingsPage from '@/pages/SettingsPage'
 import ProfilePage from '@/pages/ProfilePage'
 import NotFoundPage from '@/pages/NotFoundPage'
+import TestIntegrationPage from '@/pages/TestIntegrationPage'
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -133,13 +134,24 @@ function App() {
             </ProtectedRoute>
           }
         />
-        
+
         <Route
           path="/profile"
           element={
             <ProtectedRoute>
               <Layout>
                 <ProfilePage />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/test-integration"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <TestIntegrationPage />
               </Layout>
             </ProtectedRoute>
           }

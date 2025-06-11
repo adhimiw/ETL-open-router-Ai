@@ -20,6 +20,7 @@ type LoginFormData = z.infer<typeof loginSchema>
 
 const LoginPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false)
+  const [isAdminMode, setIsAdminMode] = useState(false)
   const navigate = useNavigate()
   const { login, isLoading, error, clearError } = useAuthStore()
 
@@ -27,6 +28,7 @@ const LoginPage: React.FC = () => {
     register,
     handleSubmit,
     formState: { errors },
+    setValue,
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
   })
@@ -35,11 +37,23 @@ const LoginPage: React.FC = () => {
     try {
       clearError()
       await login(data.email, data.password)
-      toast.success('Welcome back!')
+      toast.success('Welcome to EETL AI Platform!')
       navigate('/dashboard')
     } catch (error) {
       toast.error('Login failed. Please check your credentials.')
     }
+  }
+
+  const handleAdminLogin = () => {
+    setIsAdminMode(true)
+    setValue('email', 'admin')
+    setValue('password', 'admin')
+  }
+
+  const handleDemoLogin = () => {
+    setIsAdminMode(false)
+    setValue('email', 'demo@eetl.ai')
+    setValue('password', 'demo123')
   }
 
   return (
@@ -60,6 +74,54 @@ const LoginPage: React.FC = () => {
       </div>
 
       <div className="mt-10">
+        {/* Quick Login Options */}
+        <div className="mb-6 space-y-3">
+          <div className="text-center">
+            <p className="text-sm text-gray-600 mb-3">Quick Access:</p>
+            <div className="flex space-x-3 justify-center">
+              <button
+                type="button"
+                onClick={handleAdminLogin}
+                className={`px-4 py-2 text-sm font-medium rounded-md border transition-colors ${
+                  isAdminMode
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                🔧 Admin Mode
+              </button>
+              <button
+                type="button"
+                onClick={handleDemoLogin}
+                className={`px-4 py-2 text-sm font-medium rounded-md border transition-colors ${
+                  !isAdminMode
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                👤 Demo User
+              </button>
+            </div>
+          </div>
+
+          {isAdminMode && (
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm text-blue-700">
+                    <strong>Admin Mode:</strong> Full access to all ETL operations, data management, and system configuration.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
         <form className="space-y-6" onSubmit={handleSubmit(onSubmit)}>
           {error && (
             <div className="rounded-md bg-error-50 p-4">
